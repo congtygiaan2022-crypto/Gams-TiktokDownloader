@@ -1,0 +1,33 @@
+# Temp / OS files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+.DS_Store
+
+# PyInstaller and Python build / cache files
+__pycache__/
+*.py[cod]
+*$py.class
+build/
+dist/
+*.spec
+
+# Logs and download history files (from Antigravity_taivideotiktok)
+automation.log
+cookies.txt
+danhsachtiktok.txt
+hangdoitiktok.txt
+kenhloi.txt
+lichsutaitiktok.txt
+tải video tiktok.txt
+downloads/
+*.log
+browser_json_dump.txt
+slideshow_debug.json
+tiktok_scripts_dump.txt
+tiktok_debug_data.json
+debug_page_state.png
+
+# Local config files (optional/local to dev)
+repo_url.txt
+.git_repo_url

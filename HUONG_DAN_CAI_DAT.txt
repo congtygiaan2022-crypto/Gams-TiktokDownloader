@@ -1,0 +1,53 @@
+HƯỚNG DẪN CÀI ĐẶT TOOL TRÊN MÁY MỚI
+======================================
+
+Để chạy được tool này trên một máy tính mới, bạn cần cài đặt các phần mềm sau theo thứ tự:
+
+1. CÀI ĐẶT PYTHON
+-----------------
+- Tải Python tại: https://www.python.org/downloads/
+- Khi cài đặt, *BẮT BUỘC* phải tích vào ô: **"Add Python to PATH"** (Thêm Python vào biến môi trường).
+- Nhấn "Install Now".
+
+2. CÀI ĐẶT GEMLOGIN
+-------------------
+- Tải và cài đặt GemLogin.
+- Đăng nhập vào tài khoản GemLogin của bạn.
+- Đảm bảo GemLogin đang mở khi chạy tool.
+
+3. CÀI ĐẶT THƯ VIỆN (DEPENDENCIES)
+----------------------------------
+- Mở thư mục chứa tool này.
+- Nhấp chuột phải vào khoảng trống, chọn "Open Terminal here" hoặc mở CMD và trỏ đến thư mục này.
+- Chạy lệnh sau để cài hết các thư viện cần thiết:
+  
+  pip install -r requirements.txt
+
+  (Lệnh này sẽ tự cài: selenium, requests, yt-dlp, v.v.)
+
+4. CÀI ĐẶT FFMPEG (Quan trọng cho video chất lượng cao)
+------------------------------------------------------
+Tool sử dụng `yt-dlp` để tải video. Để ghép hình ảnh và âm thanh chất lượng cao, bạn nên cài FFmpeg:
+- Tải FFmpeg build sẵn (file .exe) và thêm vào PATH của Windows, hoặc
+- Đơn giản nhất: Đặt file `ffmpeg.exe` vào cùng thư mục với file `main.py` của tool này.
+
+5. CẤU HÌNH TOOL
+----------------
+- File `danhsachtiktok.txt`: Nhập link các profile TikTok bạn muốn tải.
+- File `proxies.txt` (nếu có dùng proxy).
+- File `config.py`: Có thể chỉnh số luồng tải (DOWNLOAD_THREADS) nếu mạng khỏe.
+
+6. CHẠY TOOL
+------------
+- Nhấp đúp vào `GiaanTesttool.py` để mở bảng điều khiển (Cần cài Python).
+- Hoặc chạy file `build_exe.bat` để tạo file `.exe` riêng (Sau đó mở trong thư mục `dist`).
+
+7. TẠO FILE EXE & TÙY CHỈNH LOGO (ICON)
+---------------------------------------
+Để tạo file `.exe` có logo riêng của bạn:
+1. Chuẩn bị 1 file ảnh định dạng `.ico` (Ví dụ: `logo.ico`).
+2. Chạy file `build_exe.bat`.
+3. Khi được hỏi, hãy nhập tên file icon của bạn (ví dụ: `logo.ico`) rồi nhấn Enter.
+4. Chờ quá trình hoàn tất, file `.exe` sẽ nằm trong thư mục `dist`.
+
+CHÚC BẠN THÀNH CÔNG!
