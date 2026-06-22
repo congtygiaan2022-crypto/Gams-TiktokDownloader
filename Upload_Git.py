@@ -65,6 +65,9 @@ tiktok_scripts_dump.txt
 tiktok_debug_data.json
 debug_page_state.png
 
+# AutoUpdate folder generated locally (important: keep it from git)
+AutoUpdate - */
+
 # Local config files (optional/local to dev)
 repo_url.txt
 .git_repo_url
@@ -74,14 +77,13 @@ repo_url.txt
     print("✓ Đã tự động tạo/cập nhật file .gitignore để lọc bỏ file rác.")
 
 def create_auto_update_folder(git_repo_url):
-    """Tạo thư mục AutoUpdate ở thư mục cha và ghi các file cài đặt vào đó"""
+    """Tạo thư mục AutoUpdate trong thư mục hiện tại và ghi các file cài đặt vào đó"""
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    parent_dir = os.path.dirname(current_dir)
     folder_name = os.path.basename(current_dir)
     
     # Đặt tên folder: AutoUpdate - tên_folder_gốc
     update_folder_name = f"AutoUpdate - {folder_name}"
-    update_folder_path = os.path.join(parent_dir, update_folder_name)
+    update_folder_path = os.path.join(current_dir, update_folder_name)
     
     if not os.path.exists(update_folder_path):
         os.makedirs(update_folder_path)

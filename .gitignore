@@ -28,6 +28,9 @@ tiktok_scripts_dump.txt
 tiktok_debug_data.json
 debug_page_state.png
 
+# AutoUpdate folder generated locally (important: keep it from git)
+AutoUpdate - */
+
 # Local config files (optional/local to dev)
 repo_url.txt
 .git_repo_url

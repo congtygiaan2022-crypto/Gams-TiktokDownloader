@@ -4,6 +4,8 @@ import sys
 import os
 import config
 from gemlogin_api import GemLoginAPI
+from gpm_login_api import GPMLoginAPI
+from donut_api import DonutAPI
 from browser import Browser
 from tiktok_manager import TikTokManager
 from downloader import Downloader
@@ -73,26 +75,15 @@ def extract_video_title(driver, video_url):
         return True
 
     try:
-        # BƯỚC 1: Thử các selector data-e2e CHÍNH XÁC nhất TRƯỚC (Vì JSON đôi khi chứa nhiều desc)
-        selectors = [
-            "[data-e2e='browse-video-desc']",
-            "h1[data-e2e='video-desc']",
-            "span[data-e2e='video-desc'] span",
-            ".video-description", # Thêm class phổ biến
-            "div[class*='DivDescription']" # Selector cho layout mới
-        ]
-        
-        for selector in selectors:
-            try:
-                caption_el = driver.find_element(By.CSS_SELECTOR, selector)
-                caption = caption_el.text.strip()
-                if is_valid_caption(caption):
-                    logger.info(f"✓ Đã lấy caption từ selector {selector}: {caption[:50]}...")
-                    return caption
-            except:
-                continue
+        # Chờ tối đa 8 giây cho script rehydration xuất hiện để đảm bảo dữ liệu trang đã được tải
+        try:
+            WebDriverWait(driver, 8).until(
+                EC.presence_of_element_located((By.ID, "__UNIVERSAL_DATA_FOR_REHYDRATION__"))
+            )
+        except:
+            pass
 
-        # BƯỚC 2: Thử trích xuất từ JSON data (Đệ quy có chọn lọc)
+        # BƯỚC 1: Thử trích xuất từ JSON data (Đệ quy có chọn lọc) - ƯU TIÊN HÀNG ĐẦU
         try:
             script = """
                 function findVideoDesc(obj) {
@@ -123,10 +114,29 @@ def extract_video_title(driver, video_url):
             if is_valid_caption(caption):
                 logger.info(f"✓ Đã lấy caption từ JSON (Video-specific): {caption[:50]}...")
                 return caption.strip()
-        except:
-            pass
+        except Exception as e:
+            logger.debug(f"Không lấy được caption từ JSON: {e}")
 
-        # BƯỚC 3: Meta description (Last resort, with validation)
+        # BƯỚC 2: Thử các selector DOM của trang chi tiết video (loại bỏ browse-video-desc để tránh lệch sang sidebar)
+        selectors = [
+            "h1[data-e2e='video-desc']",
+            "span[data-e2e='video-desc'] span",
+            "[data-e2e='video-desc']",
+            "div[class*='DivDescription']",
+            ".video-description"
+        ]
+        
+        for selector in selectors:
+            try:
+                caption_el = driver.find_element(By.CSS_SELECTOR, selector)
+                caption = caption_el.text.strip()
+                if is_valid_caption(caption):
+                    logger.info(f"✓ Đã lấy caption từ selector {selector}: {caption[:50]}...")
+                    return caption
+            except:
+                continue
+
+        # BƯỚC 3: Meta description (Last resort, với validation)
         try:
             meta_el = driver.find_element(By.CSS_SELECTOR, "meta[name='description']")
             caption = meta_el.get_attribute("content")
@@ -329,6 +339,14 @@ def get_video_url_from_lovetik(driver, video_url):
     except Exception as e:
         logger.error(f"Lỗi Lovetik: {e}")
         return None, None
+def remove_hashtags(title):
+    if not title:
+        return ""
+    # Remove hashtags starting with # or ＃ (full-width)
+    clean = re.sub(r'[#＃]\S+', '', title)
+    # Clean up multiple spaces and strip
+    clean = re.sub(r'\s+', ' ', clean).strip()
+    return clean
 
 
 def download_and_save_video(driver, video_url, channel_name, tk_manager, downloader, copy_channels=None):
@@ -414,7 +432,14 @@ def download_and_save_video(driver, video_url, channel_name, tk_manager, downloa
         # Xử lý Slideshow
         if slideshow_images:
             post_id = video_url.split('/')[-1].split('?')[0]
-            slide_dir_name = sanitize_filename(video_title[:50]) if video_title else f"slideshow_{post_id}"
+            clean_title = remove_hashtags(video_title) if video_title else ""
+            # Fallback nếu tiêu đề trống hoặc trùng tên kênh
+            if not clean_title or clean_title.lower() == channel_name.lower():
+                slide_dir_name = f"slideshow_{post_id}"
+            else:
+                slide_dir_name = sanitize_filename(clean_title[:50])
+                if not slide_dir_name:
+                    slide_dir_name = f"slideshow_{post_id}"
             slide_path = os.path.join(target_dir, slide_dir_name)
             os.makedirs(slide_path, exist_ok=True)
             
@@ -449,10 +474,22 @@ def download_and_save_video(driver, video_url, channel_name, tk_manager, downloa
 
         # Xử lý Video đơn lẻ
         if video_title:
-            safe_title = sanitize_filename(video_title)
-            if len(safe_title) > 200: safe_title = safe_title[:200]
-            random_tag = generate_random_hashtag(6)
-            save_name = f"{safe_title} #{random_tag}.mp4"
+            clean_title = remove_hashtags(video_title)
+            # Fallback nếu tiêu đề trống hoặc trùng tên kênh (channel_name)
+            if not clean_title or clean_title.lower() == channel_name.lower():
+                video_id = video_url.split('/')[-1].split('?')[0]
+                random_tag = generate_random_hashtag(6)
+                save_name = f"video_{video_id}_#{random_tag}.mp4"
+            else:
+                safe_title = sanitize_filename(clean_title)
+                if len(safe_title) > 200: safe_title = safe_title[:200]
+                if not safe_title:
+                    video_id = video_url.split('/')[-1].split('?')[0]
+                    random_tag = generate_random_hashtag(6)
+                    save_name = f"video_{video_id}_#{random_tag}.mp4"
+                else:
+                    random_tag = generate_random_hashtag(6)
+                    save_name = f"{safe_title} #{random_tag}.mp4"
         else:
             video_id = video_url.split('/')[-1].split('?')[0]
             random_tag = generate_random_hashtag(6)
@@ -804,111 +841,319 @@ def get_video_url_from_tikwm(video_url):
         logger.error(f"Lỗi khi gọi API TikWM: {e}")
         return None, None, None
 
+def _build_api():
+    """Tạo API object phù hợp với BROWSER_TYPE trong config."""
+    browser_type = getattr(config, 'BROWSER_TYPE', 'gemlogin').lower()
+    if browser_type == 'gpmlogin':
+        logger.info("Sử dụng trình duyệt: GPM Login")
+        return GPMLoginAPI()
+    elif browser_type == 'donut':
+        logger.info("Sử dụng trình duyệt: Donut Browser")
+        return DonutAPI()
+    elif browser_type in ('chrome', 'cococ'):
+        logger.info(f"Sử dụng trình duyệt: {'Chrome' if browser_type == 'chrome' else 'Cốc Cốc'} (native)")
+        return None  # Chrome/CốcCốc không cần API
+    else:
+        logger.info("Sử dụng trình duyệt: GemLogin")
+        return GemLoginAPI()
+
+
+def _get_profile_list(api):
+    """
+    Lấy danh sách profile từ GemLogin / GPM Login.
+    Trả về list các dict profile.
+    """
+    try:
+        profiles = api.get_profiles()
+        return profiles if profiles else []
+    except Exception as e:
+        logger.error(f"Lỗi lấy danh sách profile: {e}")
+        return []
+
+
+def _select_profile(profiles):
+    """
+    Chọn profile dựa trên config:
+    - Nếu SELECTED_PROFILE_ID có giá trị → dùng trực tiếp
+    - Ngược lại tìm theo SELECTED_PROFILE_NAME
+    - Fallback: profile đầu tiên trong danh sách
+    """
+    selected_id = getattr(config, 'SELECTED_PROFILE_ID', '').strip()
+    target_name = getattr(config, 'SELECTED_PROFILE_NAME', 'Tải video tiktok').strip()
+
+    if selected_id:
+        # Ưu tiên dùng ID đã lưu
+        matched = next((p for p in profiles if
+                        str(p.get('id') or p.get('uuid') or p.get('profile_id')) == selected_id), None)
+        if matched:
+            return matched
+        logger.warning(f"Không tìm thấy profile ID '{selected_id}'. Thử tìm theo tên...")
+
+    if target_name:
+        matched = next((p for p in profiles if target_name.lower() in (p.get('name') or '').lower()), None)
+        if matched:
+            return matched
+        logger.warning(f"Không tìm thấy profile tên '{target_name}'. Dùng profile đầu tiên.")
+
+    return profiles[0] if profiles else None
+
+
+def _start_native_browser(browser_handler):
+    """
+    Khởi động Chrome hoặc Cốc Cốc bằng subprocess (không qua API).
+    Trả về driver hoặc None.
+    """
+    browser_type = getattr(config, 'BROWSER_TYPE', 'chrome').lower()
+
+    if browser_type == 'chrome':
+        return browser_handler.launch_chrome(
+            user_data_dir=getattr(config, 'CHROME_USER_DATA_DIR', ''),
+            profile_name=getattr(config, 'CHROME_PROFILE_NAME', 'Default'),
+            debug_port=getattr(config, 'CHROME_DEBUG_PORT', 9222),
+            chrome_exe=getattr(config, 'CHROME_EXE_PATH', '') or None,
+        )
+    elif browser_type == 'cococ':
+        return browser_handler.launch_cococ(
+            user_data_dir=getattr(config, 'COCOC_USER_DATA_DIR', ''),
+            profile_name=getattr(config, 'COCOC_PROFILE_NAME', 'Default'),
+            debug_port=getattr(config, 'COCOC_DEBUG_PORT', 9223),
+            cococ_exe=getattr(config, 'COCOC_EXE_PATH', '') or None,
+        )
+    return None
+
+def start_browser_session_donut(api, browser_handler, profile_id):
+    """
+    Khởi động profile Donut Browser và kết nối Selenium.
+    Donut API POST /v1/profiles/{id}/run → trả về {'remote_debugging_port': 9222}
+    """
+    # Dừng trước để tảnh xung đột
+    try:
+        logger.info(f"[Donut] Kiểm tra và đóng profile {profile_id} nếu đang chạy...")
+        api.stop_profile(profile_id)
+        time.sleep(2)
+    except:
+        pass
+
+    logger.info(f"[Donut] Khởi động profile {profile_id}...")
+    try:
+        debugger_address = None
+        for attempt in range(2):
+            debugger_address = api.start_profile(profile_id)
+            if debugger_address:
+                break
+            if attempt == 0:
+                logger.warning("[Donut] Không lấy được port, thử lại...")
+                api.stop_profile(profile_id)
+                time.sleep(3)
+
+        if not debugger_address:
+            logger.error("[Donut] Không lấy được debugger address từ Donut API.")
+            return None
+
+        logger.info(f"[Donut] Debugger address: {debugger_address}")
+        return browser_handler.attach(debugger_address)
+    except Exception as e:
+        logger.error(f"[Donut] Lỗi khởi động session: {e}")
+        return None
+
+
 def main():
-    api = GemLoginAPI()
+    import random as _random
+
+    browser_type = getattr(config, 'BROWSER_TYPE', 'gemlogin').lower()
+    is_donut = (browser_type == 'donut')
+    use_api_browser = browser_type in ('gemlogin', 'gpmlogin', 'donut')
+
+    api = _build_api()  # None nếu Chrome/CốcCốc
     browser_handler = Browser()
-    
+
     tk_manager = TikTokManager()
     downloader = Downloader()
 
-    profile_id = None
+    profile_id = None           # ID đang chạy (GemLogin/GPM)
+    all_profiles = []           # Danh sách tất cả profiles (cho rotate)
+    rotate_profiles = getattr(config, 'ROTATE_PROFILES', False)
+    rotate_interval = max(1, getattr(config, 'PROFILE_ROTATE_INTERVAL', 5))
+    rotate_order = getattr(config, 'PROFILE_ROTATE_ORDER', 'sequential')
+    rotate_index = 0            # Con trỏ profile hiện tại trong danh sách
+    channel_count_since_rotate = 0
 
     try:
-        # 1. Lấy danh sách Profiles và tìm theo tên
-        logger.info("Đang lấy danh sách profiles...")
-        profiles = api.get_profiles()
-        
-        if not profiles:
-            logger.error("Không tìm thấy profile hoặc lỗi lấy danh sách.")
-            return
+        # ----------------------------------------------------------------
+        # 1. Lấy profile phù hợp với loại browser
+        # ----------------------------------------------------------------
+        if use_api_browser:
+            logger.info("Đang lấy danh sách profiles...")
+            all_profiles = _get_profile_list(api)
+            if not all_profiles:
+                logger.error("Không tìm thấy profile nào. Vui lòng kiểm tra ứng dụng quản lý browser.")
+                return
 
-        # Tìm profile có tên "Tải video tiktok"
-        target_name = "Tải video tiktok"
-        selected_profile = next((p for p in profiles if target_name.lower() in (p.get('name') or "").lower()), None)
-        
-        if not selected_profile:
-            logger.warning(f"Không tìm thấy profile mang tên '{target_name}'. Sẽ dùng profile đầu tiên.")
-            selected_profile = profiles[0]
+            selected_profile = _select_profile(all_profiles)
+            if not selected_profile:
+                logger.error("Không chọn được profile hợp lệ.")
+                return
 
-        profile_id = selected_profile.get('id') or selected_profile.get('uuid') or selected_profile.get('profile_id')
-        
-        if not profile_id:
-            logger.error(f"Không xác định được ID profile: {selected_profile}")
-            return
+            profile_id = (selected_profile.get('id') or
+                          selected_profile.get('uuid') or
+                          selected_profile.get('profile_id'))
+            if not profile_id:
+                logger.error(f"Không xác định được ID profile: {selected_profile}")
+                return
 
-        logger.info(f"Đã chọn profile: {selected_profile.get('name')} (ID: {profile_id})")
+            logger.info(f"Đã chọn profile: {selected_profile.get('name')} (ID: {profile_id})")
 
-        # Khởi động ban đầu
-        driver = start_browser_session(api, browser_handler, profile_id)
+            # Nếu rotate bật → build danh sách profile để xoay
+            if rotate_profiles and len(all_profiles) > 1:
+                # Đặt profile hiện tại là điểm bắt đầu trong danh sách xoay
+                try:
+                    rotate_index = all_profiles.index(selected_profile)
+                except ValueError:
+                    rotate_index = 0
+                logger.info(f"Chế độ Rotate Profile BẬT — {len(all_profiles)} profiles, mỗi {rotate_interval} kênh.")
+
+            # Khởi động ban đầu
+            if is_donut:
+                driver = start_browser_session_donut(api, browser_handler, profile_id)
+            else:
+                driver = start_browser_session(api, browser_handler, profile_id)
+        else:
+            # Chrome / Cốc Cốc native
+            logger.info(f"Đang khởi động {'Chrome' if browser_type == 'chrome' else 'Cốc Cốc'}...")
+            driver = _start_native_browser(browser_handler)
+
         if not driver:
             logger.error("Khởi động trình duyệt thất bại.")
             return
 
-        # 4. Xử lý danh sách TikTok
+        # ----------------------------------------------------------------
+        # 2. Xử lý danh sách kênh TikTok
+        # ----------------------------------------------------------------
         channels_data = tk_manager.get_channels()
-        
+
         from collections import defaultdict
         grouped_channels = defaultdict(list)
         for ch in channels_data:
             grouped_channels[ch['url']].append(ch)
-            
-        for channel_url, channels_in_group in grouped_channels.items():
+
+        channel_groups = list(grouped_channels.items())
+
+        for idx, (channel_url, channels_in_group) in enumerate(channel_groups):
+
+            # --- Rotate Profile (chỉ khi dùng API browser và bật rotate) ---
+            if (use_api_browser and rotate_profiles and len(all_profiles) > 1
+                    and channel_count_since_rotate >= rotate_interval and idx > 0):
+
+                logger.info(f"[Rotate] Đã xử lý {channel_count_since_rotate} kênh. Đang đổi profile...")
+                try:
+                    browser_handler.close()
+                    api.stop_profile(profile_id)
+                    time.sleep(3)
+                except Exception:
+                    pass
+
+                # Chọn profile tiếp theo
+                if rotate_order == 'random':
+                    next_profile = _random.choice(all_profiles)
+                else:  # sequential
+                    rotate_index = (rotate_index + 1) % len(all_profiles)
+                    next_profile = all_profiles[rotate_index]
+
+                profile_id = (next_profile.get('id') or
+                              next_profile.get('uuid') or
+                              next_profile.get('profile_id'))
+                logger.info(f"[Rotate] Chuyển sang profile: {next_profile.get('name')} (ID: {profile_id})")
+
+                if is_donut:
+                    driver = start_browser_session_donut(api, browser_handler, profile_id)
+                else:
+                    driver = start_browser_session(api, browser_handler, profile_id)
+
+                if not driver:
+                    logger.error("Không thể khởi động profile mới. Dừng rotate, thử khởi động lại profile cũ...")
+                    if is_donut:
+                        driver = start_browser_session_donut(api, browser_handler, profile_id)
+                    else:
+                        driver = start_browser_session(api, browser_handler, profile_id)
+                    if not driver:
+                        logger.error("Không thể tiếp tục. Thoát.")
+                        return
+
+                channel_count_since_rotate = 0
+
+            # --- Xử lý từng kênh ---
             max_retries = 3
             for attempt in range(max_retries):
                 try:
                     if not driver:
-                         raise Exception("Driver is None")
-                    
-                    # Lấy tên kênh đầu tiên làm kênh chính để cào
-                    primary_channel = channels_in_group[0]
-                    
-                    # QUÉT VÀ TẢI LUÔN (Sequential)
-                    res = scrape_channel(driver, channel_url, tk_manager=tk_manager, downloader=downloader, copy_channels=channels_in_group)
-                    
+                        raise Exception("Driver is None")
+
+                    res = scrape_channel(
+                        driver, channel_url,
+                        tk_manager=tk_manager,
+                        downloader=downloader,
+                        copy_channels=channels_in_group
+                    )
+
                     if res == "DIE":
                         tk_manager.update_channel_status(channel_url, "kênh die")
                     else:
                         tk_manager.update_channel_status(channel_url, "kênh live")
-                        total_downloaded = res
-                        logger.info(f"✓ Hoàn tất nhóm kênh {channel_url}. Đã tải {total_downloaded} video mới.")
+                        logger.info(f"✓ Hoàn tất kênh {channel_url}. Đã tải {res} video mới.")
+
+                    channel_count_since_rotate += 1
                     break
 
                 except Exception as e:
                     logger.warning(f"Lỗi xử lý TikTok {channel_url} (Lần thử {attempt+1}/{max_retries}): {e}")
-                    # Logic khởi động lại session
                     logger.info("Đang khởi động lại session trình duyệt...")
                     try:
                         browser_handler.close()
-                    except: pass
-                    try:
-                        api.stop_profile(profile_id)
-                    except: pass
-                    
-                    time.sleep(5)
-                    driver = start_browser_session(api, browser_handler, profile_id)
+                    except:
+                        pass
+
+                    if use_api_browser:
+                        try:
+                            api.stop_profile(profile_id)
+                        except:
+                            pass
+                        time.sleep(5)
+                        if is_donut:
+                            driver = start_browser_session_donut(api, browser_handler, profile_id)
+                        else:
+                            driver = start_browser_session(api, browser_handler, profile_id)
+                    else:
+                        time.sleep(5)
+                        driver = _start_native_browser(browser_handler)
+
                     if not driver:
                         logger.error("Không thể khởi động lại session. Bỏ qua kênh này.")
                         break
 
-        logger.info("Hoàn tất tất cả. Đang đóng trình duyệt...")
+        # ----------------------------------------------------------------
+        # 3. Hoàn tất
+        # ----------------------------------------------------------------
+        logger.info("Hoàn tất tất cả kênh. Đang đóng trình duyệt...")
         browser_handler.close()
-        api.stop_profile(profile_id)
-        profile_id = None 
+        if use_api_browser and profile_id:
+            api.stop_profile(profile_id)
+            profile_id = None
 
-        # (Phần ThreadPool cũ đã được thay thế bằng vòng lặp trên)
-
-                
     except Exception as e:
         logger.exception(f"Có lỗi xảy ra: {e}")
 
     finally:
         if browser_handler.driver:
             browser_handler.close()
-        
-        if profile_id:
+
+        if use_api_browser and profile_id:
             logger.info(f"Đang dừng profile {profile_id}...")
-            api.stop_profile(profile_id)
+            try:
+                api.stop_profile(profile_id)
+            except:
+                pass
             logger.info("Hoàn tất.")
+
 
 if __name__ == "__main__":
     main()

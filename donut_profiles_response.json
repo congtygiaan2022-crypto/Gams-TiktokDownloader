@@ -1,0 +1,22 @@
+{
+  "profiles": [
+    {
+      "id": "0ad52d04-01b2-488b-8628-f067a4940f17",
+      "name": "Tiktok Download 1",
+      "browser": "wayfern",
+      "version": "149.0.7827.114",
+      "proxy_id": null,
+      "launch_hook": null,
+      "process_id": null,
+      "last_launch": 1782120226,
+      "release_type": "stable",
+      "camoufox_config": null,
+      "group_id": null,
+      "tags": [],
+      "is_running": false,
+      "proxy_bypass_rules": [],
+      "vpn_id": null
+    }
+  ],
+  "total": 1
+}
