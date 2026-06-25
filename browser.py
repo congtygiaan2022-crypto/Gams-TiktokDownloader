@@ -25,14 +25,57 @@ class Browser:
                 time.sleep(0.5)
         return False
 
-    def _kill_browser_processes(self, process_name):
-        """Tắt tất cả tiến trình browser đang chạy để tránh khóa profile."""
+    def _kill_browser_processes(self, process_name, user_data_dir=None, debug_port=None):
+        """
+        Tắt các tiến trình browser đang chạy liên quan đến profile được chỉ định.
+        Nếu không có user_data_dir, chúng ta sẽ KHÔNG tắt tràn lan (để tránh ảnh hưởng tới tool khác).
+        """
+        if not user_data_dir:
+            self.logger.info(f"Bỏ qua tắt tiến trình {process_name} vì không có thông tin user_data_dir.")
+            return
+
+        import json
+        # Chuẩn hóa đường dẫn thư mục profile để so sánh chính xác
+        target_dir = os.path.abspath(user_data_dir).lower()
+        self.logger.info(f"Đang tìm và đóng các tiến trình {process_name} sử dụng profile {target_dir}...")
+        
         try:
-            self.logger.info(f"Đang đóng các tiến trình {process_name} để tránh khóa profile...")
-            subprocess.run(f'taskkill /F /IM {process_name}', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            time.sleep(1)
+            # Query Win32_Process using powershell to get ProcessId and CommandLine
+            powershell_cmd = f"Get-CimInstance Win32_Process -Filter \"name='{process_name}'\" | Select-Object ProcessId, CommandLine | ConvertTo-Json"
+            cmd = ["powershell", "-NoProfile", "-Command", powershell_cmd]
+            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8")
+            
+            if result.returncode == 0 and result.stdout.strip():
+                stdout_str = result.stdout.strip()
+                try:
+                    data = json.loads(stdout_str)
+                    if isinstance(data, dict):
+                        processes = [data]
+                    elif isinstance(data, list):
+                        processes = data
+                    else:
+                        processes = []
+                except Exception:
+                    processes = []
+                
+                killed_count = 0
+                for proc in processes:
+                    pid = proc.get("ProcessId")
+                    cmdline = proc.get("CommandLine") or ""
+                    if pid and cmdline:
+                        match_profile = (target_dir in cmdline.lower()) or (user_data_dir.lower() in cmdline.lower())
+                        match_port = debug_port and f"--remote-debugging-port={debug_port}" in cmdline
+                        
+                        if match_profile or match_port:
+                            self.logger.info(f"  Tắt tiến trình {process_name} liên quan (PID: {pid})...")
+                            subprocess.run(f"taskkill /F /PID {pid}", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                            killed_count += 1
+                if killed_count > 0:
+                    time.sleep(1)
+            else:
+                self.logger.info(f"Không phát hiện tiến trình {process_name} nào đang chạy profile này.")
         except Exception as e:
-            self.logger.warning(f"Lỗi khi tắt tiến trình {process_name}: {e}")
+            self.logger.warning(f"Lỗi khi tắt tiến trình {process_name} theo profile: {e}")
 
     def attach(self, debugger_address, driver_path=None):
         """
@@ -87,9 +130,6 @@ class Browser:
             driver_path: Đường dẫn chromedriver.exe
         """
         try:
-            # Tắt Chrome đang chạy để tránh khóa profile
-            self._kill_browser_processes("chrome.exe")
-
             # Tìm Chrome exe nếu không chỉ định
             if not chrome_exe or not os.path.exists(chrome_exe):
                 chrome_exe = self._find_chrome_exe()
@@ -110,6 +150,9 @@ class Browser:
                 )
                 user_data_dir = new_dir
             
+            # Tắt Chrome đang chạy của profile này để tránh khóa profile
+            self._kill_browser_processes("chrome.exe", user_data_dir, debug_port)
+
             os.makedirs(user_data_dir, exist_ok=True)
 
             import re
@@ -128,10 +171,7 @@ class Browser:
                 f"--profile-directory={profile_dir}",
                 "--no-first-run",
                 "--no-default-browser-check",
-                "--disable-gpu",
                 "--disable-blink-features=AutomationControlled",
-                "--no-sandbox",
-                "--disable-dev-shm-usage",
             ]
 
             self._native_process = subprocess.Popen(
@@ -162,9 +202,6 @@ class Browser:
             driver_path: Đường dẫn chromedriver tương thích với Cốc Cốc
         """
         try:
-            # Tắt Cốc Cốc đang chạy để tránh khóa profile
-            self._kill_browser_processes("browser.exe")
-
             if not cococ_exe or not os.path.exists(cococ_exe):
                 cococ_exe = self._find_cococ_exe()
             if not cococ_exe:
@@ -184,6 +221,9 @@ class Browser:
                 )
                 user_data_dir = new_dir
             
+            # Tắt Cốc Cốc đang chạy của profile này để tránh khóa profile
+            self._kill_browser_processes("browser.exe", user_data_dir, debug_port)
+
             os.makedirs(user_data_dir, exist_ok=True)
 
             import re
@@ -202,10 +242,7 @@ class Browser:
                 f"--profile-directory={profile_dir}",
                 "--no-first-run",
                 "--no-default-browser-check",
-                "--disable-gpu",
                 "--disable-blink-features=AutomationControlled",
-                "--no-sandbox",
-                "--disable-dev-shm-usage",
             ]
 
             self._native_process = subprocess.Popen(
