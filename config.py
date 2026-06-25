@@ -22,8 +22,8 @@ SELECTED_PROFILE_NAME = 'Tiktok Download 1'
 
 # --- Chrome / Cốc Cốc Native (không qua API) ---
 CHROME_EXE_PATH = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
-CHROME_USER_DATA_DIR = 'C:\\Users\\congt\\AppData\\Local\\Google\\Chrome\\User Data'
-CHROME_PROFILE_NAME = 'Your Chrome (Default)'
+CHROME_USER_DATA_DIR = 'C:\\Users\\admin\\AppData\\Local\\Google\\Chrome\\User Data'
+CHROME_PROFILE_NAME = 'Chrome của bạn (Default)'
 CHROME_DEBUG_PORT = 9222
 
 COCOC_EXE_PATH = ''

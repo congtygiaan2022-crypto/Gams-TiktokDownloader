@@ -682,6 +682,67 @@ def close_tiktok_login_modal(driver):
             continue
     return False
 
+def check_and_resolve_something_went_wrong(driver, channel_url, max_attempts=3):
+    """
+    Kiểm tra xem trang có bị lỗi 'Something went wrong' hay không.
+    Nếu có, tự động nhấn nút Refresh hoặc tải lại trang.
+    Trả về True nếu phát hiện và đã xử lý (hoặc đang xử lý), False nếu không bị lỗi.
+    Trả về 'SOMETHING_WENT_WRONG' nếu đã thử hết số lần mà vẫn bị lỗi.
+    """
+    for attempt in range(max_attempts):
+        try:
+            page_text = driver.find_element(By.TAG_NAME, "body").text
+        except:
+            page_text = ""
+
+        if "something went wrong" in page_text.lower():
+            logger.warning(f"Lỗi 'Something went wrong' xuất hiện trên kênh {channel_url}. Đang thử click Refresh lần {attempt + 1}/{max_attempts}...")
+            clicked = False
+            xpaths = [
+                "//button[text()='Refresh']",
+                "//button[contains(text(), 'Refresh')]",
+                "//*[text()='Refresh']",
+                "//div[text()='Refresh']",
+                "//button[contains(@class, 'refresh')]",
+                "//*[contains(@class, 'Refresh')]"
+            ]
+            for xpath in xpaths:
+                try:
+                    elements = driver.find_elements(By.XPATH, xpath)
+                    for el in elements:
+                        if el.is_displayed() and el.is_enabled():
+                            try:
+                                el.click()
+                            except:
+                                driver.execute_script("arguments[0].click();", el)
+                            clicked = True
+                            break
+                    if clicked:
+                        break
+                except:
+                    pass
+            if not clicked:
+                logger.info("Không tìm thấy nút Refresh bằng selector, đang reload trang bằng driver.refresh()...")
+                driver.refresh()
+            
+            time.sleep(5)
+            close_tiktok_login_modal(driver)
+        else:
+            if attempt > 0:
+                logger.info(f"✓ Đã vượt qua lỗi 'Something went wrong' sau khi refresh.")
+                return True
+            return False
+
+    # Check one last time
+    try:
+        page_text = driver.find_element(By.TAG_NAME, "body").text
+    except:
+        page_text = ""
+    if "something went wrong" in page_text.lower():
+        logger.error(f"Lỗi 'Something went wrong' vẫn tồn tại sau {max_attempts} lần refresh trên kênh {channel_url}!")
+        return "SOMETHING_WENT_WRONG"
+    return True
+
 def scrape_channel(driver, channel_url, tk_manager=None, downloader=None, max_videos=config.MAX_VIDEOS_PER_CHANNEL, copy_channels=None):
     """
     Quét các video TikTok mới nhất từ profile bằng cách nhấp vào từng post 
@@ -695,63 +756,23 @@ def scrape_channel(driver, channel_url, tk_manager=None, downloader=None, max_vi
         close_tiktok_login_modal(driver)
 
         # Check for early page load issues (Die or Something went wrong)
-        something_went_wrong_detected = False
-        for refresh_attempt in range(4):
-            try:
-                page_text = driver.find_element(By.TAG_NAME, "body").text
-            except:
-                page_text = ""
+        sww_res = check_and_resolve_something_went_wrong(driver, channel_url, max_attempts=4)
+        if sww_res == "SOMETHING_WENT_WRONG":
+            return "SOMETHING_WENT_WRONG"
 
-            # Check for "Die" account early
-            die_indicators = [
-                "Couldn't find this account",
-                "Looking for videos? Try browsing our trending creators"
-            ]
-            if any(ind in page_text for ind in die_indicators):
-                logger.warning(f"Kênh {channel_url} có vẻ đã bị xóa hoặc die (check early).")
-                return "DIE"
+        try:
+            page_text = driver.find_element(By.TAG_NAME, "body").text
+        except:
+            page_text = ""
 
-            if "something went wrong" in page_text.lower():
-                something_went_wrong_detected = True
-                if refresh_attempt < 3:
-                    logger.warning(f"Lỗi 'Something went wrong' xuất hiện trên kênh {channel_url}. Đang thử click Refresh lần {refresh_attempt + 1}/3...")
-                    # Click Refresh button
-                    clicked = False
-                    xpaths = [
-                        "//button[text()='Refresh']",
-                        "//button[contains(text(), 'Refresh')]",
-                        "//*[text()='Refresh']",
-                        "//div[text()='Refresh']",
-                        "//button[contains(@class, 'refresh')]",
-                        "//*[contains(@class, 'Refresh')]"
-                    ]
-                    for xpath in xpaths:
-                        try:
-                            elements = driver.find_elements(By.XPATH, xpath)
-                            for el in elements:
-                                if el.is_displayed() and el.is_enabled():
-                                    try:
-                                        el.click()
-                                    except:
-                                        driver.execute_script("arguments[0].click();", el)
-                                    clicked = True
-                                    break
-                            if clicked:
-                                break
-                        except:
-                            pass
-                    if not clicked:
-                        logger.info("Không tìm thấy nút Refresh bằng selector, đang reload trang bằng driver.refresh()...")
-                        driver.refresh()
-                    
-                    time.sleep(5)
-                    close_tiktok_login_modal(driver)
-                else:
-                    logger.error(f"Lỗi 'Something went wrong' vẫn tồn tại sau 3 lần refresh trên kênh {channel_url}!")
-                    return "SOMETHING_WENT_WRONG"
-            else:
-                something_went_wrong_detected = False
-                break
+        # Check for "Die" account early
+        die_indicators = [
+            "Couldn't find this account",
+            "Looking for videos? Try browsing our trending creators"
+        ]
+        if any(ind in page_text for ind in die_indicators):
+            logger.warning(f"Kênh {channel_url} có vẻ đã bị xóa hoặc die (check early).")
+            return "DIE"
 
         wait = WebDriverWait(driver, 15)
         
@@ -812,6 +833,17 @@ def scrape_channel(driver, channel_url, tk_manager=None, downloader=None, max_vi
             if posts:
                 logger.info(f"Đã tìm thấy {len(posts)} bài viết trên DOM.")
                 break
+            
+            # Check for 'Something went wrong' during post load attempt
+            sww_res = check_and_resolve_something_went_wrong(driver, channel_url, max_attempts=2)
+            if sww_res == "SOMETHING_WENT_WRONG":
+                return "SOMETHING_WENT_WRONG"
+            elif sww_res is True:
+                # Nếu đã refresh lại trang, ta cần tìm lại posts từ đầu
+                posts = driver.find_elements(By.XPATH, post_selector)
+                if posts:
+                    logger.info(f"Đã tìm thấy {len(posts)} bài viết trên DOM sau khi refresh lỗi.")
+                    break
             
             try:
                 # Đợi ngắn xem phần tử xuất hiện không

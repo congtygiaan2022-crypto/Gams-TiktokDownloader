@@ -10,7 +10,7 @@ if %errorlevel% neq 0 (
     echo ====================================================
     echo   [LOI] Khong the khoi chay Tool.
     echo   Vui long kiem tra:
-    echo   1. May tinh da cai dat Python (tich chon Add to PATH) chua.
+    echo   1. May tinh da cai dat Python - tich chon Add to PATH chua.
     echo   2. May tinh da cai dat phan mem Git chua.
     echo   3. Da chay file 'Cai_Dat_Thu_Vien.bat' truoc do chua.
     echo ====================================================

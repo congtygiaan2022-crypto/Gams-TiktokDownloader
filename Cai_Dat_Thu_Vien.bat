@@ -14,7 +14,7 @@ if %errorlevel% equ 0 (
 ) else (
     echo ====================================================
     echo   [LOI] Cai dat thu vien that bai.
-    echo   Vui long kiem tra xem ban da cai dat Python (tich chon Add to PATH) chua.
+    echo   Vui long kiem tra xem ban da cai dat Python - tich chon Add to PATH chua.
     echo ====================================================
 )
 echo.
