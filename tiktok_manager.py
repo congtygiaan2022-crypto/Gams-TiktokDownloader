@@ -125,8 +125,8 @@ class TikTokManager:
             
             self._write_file_atomically(self.channels_file, channels_lines)
             
-            # Ngoài file chính, nếu kênh die thì ghi vào kenhloi.txt
-            if "die" in status.lower():
+            # Ngoài file chính, nếu kênh die hoặc lỗi thì ghi vào kenhloi.txt
+            if "die" in status.lower() or "something went wrong" in status.lower() or "lỗi" in status.lower():
                 try:
                     with open(self.error_file, 'a', encoding='utf-8') as f:
                         import datetime

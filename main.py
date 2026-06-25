@@ -433,8 +433,8 @@ def download_and_save_video(driver, video_url, channel_name, tk_manager, downloa
         if slideshow_images:
             post_id = video_url.split('/')[-1].split('?')[0]
             clean_title = remove_hashtags(video_title) if video_title else ""
-            # Fallback nếu tiêu đề trống hoặc trùng tên kênh
-            if not clean_title or clean_title.lower() == channel_name.lower():
+            # Fallback nếu tiêu đề trống
+            if not clean_title:
                 slide_dir_name = f"slideshow_{post_id}"
             else:
                 slide_dir_name = sanitize_filename(clean_title[:50])
@@ -475,8 +475,8 @@ def download_and_save_video(driver, video_url, channel_name, tk_manager, downloa
         # Xử lý Video đơn lẻ
         if video_title:
             clean_title = remove_hashtags(video_title)
-            # Fallback nếu tiêu đề trống hoặc trùng tên kênh (channel_name)
-            if not clean_title or clean_title.lower() == channel_name.lower():
+            # Fallback nếu tiêu đề trống
+            if not clean_title:
                 video_id = video_url.split('/')[-1].split('?')[0]
                 random_tag = generate_random_hashtag(6)
                 save_name = f"video_{video_id}_#{random_tag}.mp4"
@@ -572,6 +572,116 @@ def extract_video_stats(driver):
     except Exception as e:
         logger.warning(f"Lỗi trích xuất thống kê: {e}")
         return None
+def copy_existing_download(video_url, origin_channel_name, copy_channels, tk_manager):
+    """
+    Tìm kiếm file/thư mục đã tải trước đó của video_url trong thư mục origin_channel_name,
+    và copy sang các thư mục khác trong copy_channels nếu chưa có.
+    """
+    if not copy_channels or len(copy_channels) <= 1:
+        return
+    
+    # 1. Tìm tên file/thư mục từ report file
+    report_file = getattr(config, 'DOWNLOAD_REPORT_FILE', 'tải video tiktok.txt')
+    filename = None
+    if os.path.exists(report_file):
+        try:
+            with open(report_file, 'r', encoding='utf-8', errors='ignore') as f:
+                # Đọc ngược hoặc duyệt tìm dòng khớp video_url
+                for line in f:
+                    if video_url in line and " | File: " in line:
+                        parts = line.split(" | File: ")
+                        if len(parts) > 1:
+                            filename = parts[1].strip()
+        except Exception as e:
+            logger.warning(f"Lỗi đọc report file {report_file}: {e}")
+            
+    # 2. Nếu không tìm thấy trong report, thử tìm trên đĩa (quét thư mục gốc theo ID video)
+    video_id = video_url.split('/')[-1].split('?')[0]
+    origin_dir = os.path.join(config.DOWNLOAD_PATH, origin_channel_name)
+    
+    if not filename and os.path.exists(origin_dir):
+        try:
+            for item in os.listdir(origin_dir):
+                if video_id in item:
+                    filename = item
+                    break
+        except Exception as e:
+            logger.warning(f"Lỗi duyệt thư mục gốc {origin_dir}: {e}")
+            
+    if not filename:
+        logger.warning(f"Không tìm thấy tên file/thư mục lưu trước đó cho {video_url} để thực hiện copy.")
+        return
+
+    # 3. Tiến hành copy sang các thư mục đích
+    src_path = os.path.join(origin_dir, filename)
+    if not os.path.exists(src_path):
+        logger.warning(f"File nguồn không tồn tại trên đĩa để copy: {src_path}")
+        return
+
+    is_dir = os.path.isdir(src_path)
+    import shutil
+    
+    for copy_ch in copy_channels:
+        target_name = copy_ch.get('name') or origin_channel_name
+        if target_name == origin_channel_name:
+            continue
+            
+        dest_dir = os.path.join(config.DOWNLOAD_PATH, target_name)
+        os.makedirs(dest_dir, exist_ok=True)
+        dest_path = os.path.join(dest_dir, filename)
+        
+        if not os.path.exists(dest_path):
+            try:
+                if is_dir:
+                    shutil.copytree(src_path, dest_path)
+                    logger.info(f"✓ Đã copy thư mục slideshow đã tải trước đó sang {target_name}: {filename}")
+                else:
+                    shutil.copy(src_path, dest_path)
+                    logger.info(f"✓ Đã copy video đã tải trước đó sang {target_name}: {filename}")
+                
+                # Ghi nhận vào báo cáo tải cho thư mục đích
+                if tk_manager:
+                    tk_manager.add_to_download_report(target_name, video_url, filename)
+            except Exception as e:
+                logger.error(f"Lỗi copy {filename} sang {target_name}: {e}")
+
+def close_tiktok_login_modal(driver):
+    """
+    Tự động phát hiện và đóng cửa sổ đăng nhập (login modal) của TikTok nếu xuất hiện.
+    """
+    try:
+        # Cách 1: Gửi phím ESCAPE tới body để đóng các dialog/modal nhanh
+        driver.find_element(By.TAG_NAME, 'body').send_keys(Keys.ESCAPE)
+    except:
+        pass
+
+    # Cách 2: Tìm các nút Đóng modal bằng XPath
+    selectors = [
+        "//div[contains(@id, 'login-modal')]//div[contains(@class, 'close')]",
+        "//button[@aria-label='Close']",
+        "//div[contains(@class, 'login-modal')]//button",
+        "//*[@data-e2e='modal-close-button']",
+        "//div[contains(@class, 'ModalClose')]//button",
+        "//div[contains(@class, 'modal')]//div[contains(@class, 'close')]",
+        "//button[contains(@class, 'close')]"
+    ]
+    
+    for xpath in selectors:
+        try:
+            elements = driver.find_elements(By.XPATH, xpath)
+            for el in elements:
+                if el.is_displayed():
+                    try:
+                        el.click()
+                    except:
+                        driver.execute_script("arguments[0].click();", el)
+                    logger.info("✓ Đã click đóng login popup của TikTok.")
+                    time.sleep(1)
+                    return True
+        except:
+            continue
+    return False
+
 def scrape_channel(driver, channel_url, tk_manager=None, downloader=None, max_videos=config.MAX_VIDEOS_PER_CHANNEL, copy_channels=None):
     """
     Quét các video TikTok mới nhất từ profile bằng cách nhấp vào từng post 
@@ -582,6 +692,67 @@ def scrape_channel(driver, channel_url, tk_manager=None, downloader=None, max_vi
     try:
         logger.info(f"📡 ĐANG QUÉT KÊNH: {channel_url}")
         driver.get(channel_url)
+        close_tiktok_login_modal(driver)
+
+        # Check for early page load issues (Die or Something went wrong)
+        something_went_wrong_detected = False
+        for refresh_attempt in range(4):
+            try:
+                page_text = driver.find_element(By.TAG_NAME, "body").text
+            except:
+                page_text = ""
+
+            # Check for "Die" account early
+            die_indicators = [
+                "Couldn't find this account",
+                "Looking for videos? Try browsing our trending creators"
+            ]
+            if any(ind in page_text for ind in die_indicators):
+                logger.warning(f"Kênh {channel_url} có vẻ đã bị xóa hoặc die (check early).")
+                return "DIE"
+
+            if "something went wrong" in page_text.lower():
+                something_went_wrong_detected = True
+                if refresh_attempt < 3:
+                    logger.warning(f"Lỗi 'Something went wrong' xuất hiện trên kênh {channel_url}. Đang thử click Refresh lần {refresh_attempt + 1}/3...")
+                    # Click Refresh button
+                    clicked = False
+                    xpaths = [
+                        "//button[text()='Refresh']",
+                        "//button[contains(text(), 'Refresh')]",
+                        "//*[text()='Refresh']",
+                        "//div[text()='Refresh']",
+                        "//button[contains(@class, 'refresh')]",
+                        "//*[contains(@class, 'Refresh')]"
+                    ]
+                    for xpath in xpaths:
+                        try:
+                            elements = driver.find_elements(By.XPATH, xpath)
+                            for el in elements:
+                                if el.is_displayed() and el.is_enabled():
+                                    try:
+                                        el.click()
+                                    except:
+                                        driver.execute_script("arguments[0].click();", el)
+                                    clicked = True
+                                    break
+                            if clicked:
+                                break
+                        except:
+                            pass
+                    if not clicked:
+                        logger.info("Không tìm thấy nút Refresh bằng selector, đang reload trang bằng driver.refresh()...")
+                        driver.refresh()
+                    
+                    time.sleep(5)
+                    close_tiktok_login_modal(driver)
+                else:
+                    logger.error(f"Lỗi 'Something went wrong' vẫn tồn tại sau 3 lần refresh trên kênh {channel_url}!")
+                    return "SOMETHING_WENT_WRONG"
+            else:
+                something_went_wrong_detected = False
+                break
+
         wait = WebDriverWait(driver, 15)
         
         # Lấy tên người dùng
@@ -633,14 +804,35 @@ def scrape_channel(driver, channel_url, tk_manager=None, downloader=None, max_vi
         # Lưu ID của tab chính (Profile TikTok)
         main_tab = driver.current_window_handle
 
-        post_selector = "//div[@data-e2e='user-post-item']" # Đợi một chút để video load (Lazy load)
-        try:
-            WebDriverWait(driver, 10).until(
-                EC.presence_of_element_located((By.XPATH, post_selector))
-            )
-        except:
-            driver.execute_script("window.scrollBy(0, 500);")
+        post_selector = "//*[@data-e2e='user-post-item']"
+        posts = []
+        for attempt in range(5):
+            close_tiktok_login_modal(driver)
+            posts = driver.find_elements(By.XPATH, post_selector)
+            if posts:
+                logger.info(f"Đã tìm thấy {len(posts)} bài viết trên DOM.")
+                break
+            
+            try:
+                # Đợi ngắn xem phần tử xuất hiện không
+                WebDriverWait(driver, 2).until(
+                    EC.presence_of_element_located((By.XPATH, post_selector))
+                )
+                posts = driver.find_elements(By.XPATH, post_selector)
+                if posts:
+                    break
+            except:
+                pass
+                
+            # Cuộn xuống để kích hoạt load (kể cả kênh có Playlist làm đẩy grid video xuống dưới)
+            scroll_amt = (attempt + 1) * 400
+            logger.info(f"Chưa tìm thấy bài viết, cuộn xuống {scroll_amt}px (Lần thử {attempt + 1}/5)...")
+            driver.execute_script(f"window.scrollTo(0, {scroll_amt});")
             time.sleep(2)
+            
+        # Cuộn lại lên đầu để chuẩn bị quét từ video đầu tiên
+        driver.execute_script("window.scrollTo(0, 0);")
+        time.sleep(1.5)
 
         posts = driver.find_elements(By.XPATH, post_selector)
         if not posts:
@@ -672,6 +864,7 @@ def scrape_channel(driver, channel_url, tk_manager=None, downloader=None, max_vi
                     break
                 post = current_posts[i]
                 
+                close_tiktok_login_modal(driver)
                 driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", post)
                 time.sleep(0.5)
                 
@@ -683,6 +876,7 @@ def scrape_channel(driver, channel_url, tk_manager=None, downloader=None, max_vi
                         full_url = post_href.split('?')[0].rstrip('/')
                         if history and full_url in history:
                             logger.info(f"Bỏ qua (đã tải): {full_url}")
+                            copy_existing_download(full_url, final_dir_name, copy_channels, tk_manager)
                             continue
                 except: pass
 
@@ -690,6 +884,7 @@ def scrape_channel(driver, channel_url, tk_manager=None, downloader=None, max_vi
                 video_loaded = False
                 for click_attempt in range(3):
                     try:
+                        close_tiktok_login_modal(driver)
                         # Click vào post
                         try:
                             post.click()
@@ -710,6 +905,7 @@ def scrape_channel(driver, channel_url, tk_manager=None, downloader=None, max_vi
                     full_url = driver.current_url.split('?')[0].rstrip('/')
                     if history and full_url in history:
                         logger.info(f"Bỏ qua (đã tải): {full_url}")
+                        copy_existing_download(full_url, final_dir_name, copy_channels, tk_manager)
                     else:
                         logger.info(f"👉 Xử lý video {count+1}/{max_videos}...")
                         logger.info(f"🔗 Đấu nối: {full_url}")
@@ -748,6 +944,17 @@ def scrape_channel(driver, channel_url, tk_manager=None, downloader=None, max_vi
 
             except Exception as e:
                 logger.warning(f"Lỗi khi xử lý bài viết thứ {i+1}: {e}")
+                # Kiểm tra mất session ngay tại đây
+                is_session_lost = False
+                try:
+                    _ = driver.current_window_handle
+                except Exception as driver_err:
+                    is_session_lost = True
+                    logger.error(f"Phát hiện mất kết nối trình duyệt khi xử lý bài viết: {driver_err}")
+
+                if is_session_lost or "invalid session id" in str(e).lower() or "no such window" in str(e).lower():
+                    raise e
+
                 # Đảm bảo quay về tab chính nếu lỗi
                 try: 
                     if driver.current_window_handle != main_handle:
@@ -758,8 +965,15 @@ def scrape_channel(driver, channel_url, tk_manager=None, downloader=None, max_vi
             
         return count
     except Exception as e:
-        # Kiểm tra nếu là lỗi mất session Selenium thì re-raise để main() khởi động lại
-        if "invalid session id" in str(e).lower() or "no such window" in str(e).lower():
+        # Thử kiểm tra xem driver còn sống hay đã mất kết nối hoàn toàn
+        is_session_lost = False
+        try:
+            _ = driver.current_window_handle
+        except Exception as driver_err:
+            is_session_lost = True
+            logger.error(f"Phát hiện mất kết nối trình duyệt: {driver_err}")
+
+        if is_session_lost or "invalid session id" in str(e).lower() or "no such window" in str(e).lower():
             logger.error(f"Lỗi mất session khi quét TikTok {channel_url}: {e}")
             raise e 
         logger.error(f"Lỗi khi quét TikTok {channel_url}: {e}")
@@ -1097,6 +1311,8 @@ def main():
 
                     if res == "DIE":
                         tk_manager.update_channel_status(channel_url, "kênh die")
+                    elif res == "SOMETHING_WENT_WRONG":
+                        tk_manager.update_channel_status(channel_url, "kênh lỗi Something went wrong")
                     else:
                         tk_manager.update_channel_status(channel_url, "kênh live")
                         logger.info(f"✓ Hoàn tất kênh {channel_url}. Đã tải {res} video mới.")
