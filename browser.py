@@ -172,6 +172,9 @@ class Browser:
                 "--no-first-run",
                 "--no-default-browser-check",
                 "--disable-blink-features=AutomationControlled",
+                "--mute-audio",
+                "--disable-gpu",
+                "--disable-dev-shm-usage",
             ]
 
             self._native_process = subprocess.Popen(
@@ -243,6 +246,9 @@ class Browser:
                 "--no-first-run",
                 "--no-default-browser-check",
                 "--disable-blink-features=AutomationControlled",
+                "--mute-audio",
+                "--disable-gpu",
+                "--disable-dev-shm-usage",
             ]
 
             self._native_process = subprocess.Popen(

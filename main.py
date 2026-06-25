@@ -482,7 +482,7 @@ def download_and_save_video(driver, video_url, channel_name, tk_manager, downloa
                 save_name = f"video_{video_id}_#{random_tag}.mp4"
             else:
                 safe_title = sanitize_filename(clean_title)
-                if len(safe_title) > 200: safe_title = safe_title[:200]
+                if len(safe_title) > 80: safe_title = safe_title[:80].strip()
                 if not safe_title:
                     video_id = video_url.split('/')[-1].split('?')[0]
                     random_tag = generate_random_hashtag(6)
@@ -960,11 +960,33 @@ def scrape_channel(driver, channel_url, tk_manager=None, downloader=None, max_vi
                             time.sleep(3)
                             download_and_save_video(driver, full_url, final_dir_name, tk_manager, downloader, copy_channels=copy_channels)
                         finally:
-                            # Luôn đóng tab phụ và về tab chính
-                            if len(driver.window_handles) > 1:
-                                driver.close()
-                                time.sleep(0.5)
-                            driver.switch_to.window(main_handle)
+                            # Luôn đóng tất cả các tab phụ (kể cả popup ads) và về tab chính
+                            try:
+                                current_handles = driver.window_handles
+                                if main_handle in current_handles:
+                                    for h in list(current_handles):
+                                        if h != main_handle:
+                                            try:
+                                                driver.switch_to.window(h)
+                                                driver.close()
+                                                time.sleep(0.2)
+                                            except:
+                                                pass
+                                    driver.switch_to.window(main_handle)
+                                else:
+                                    # Nếu mất main_handle, giữ lại tab đầu tiên làm main_handle mới
+                                    if current_handles:
+                                        main_handle = current_handles[0]
+                                        for h in list(current_handles)[1:]:
+                                            try:
+                                                driver.switch_to.window(h)
+                                                driver.close()
+                                                time.sleep(0.2)
+                                            except:
+                                                pass
+                                        driver.switch_to.window(main_handle)
+                            except Exception as win_err:
+                                logger.warning(f"Lỗi dọn dẹp các tab phụ: {win_err}")
 
                         count += 1
                 else:
