@@ -647,7 +647,8 @@ def copy_existing_download(video_url, origin_channel_name, copy_channels, tk_man
 
 def close_tiktok_login_modal(driver):
     """
-    Tự động phát hiện và đóng cửa sổ đăng nhập (login modal) của TikTok nếu xuất hiện.
+    Tự động phát hiện và đóng tất cả các cửa sổ quảng cáo, modal đăng nhập,
+    hoặc lựa chọn sở thích (popups) của TikTok nếu xuất hiện.
     """
     try:
         # Cách 1: Gửi phím ESCAPE tới body để đóng các dialog/modal nhanh
@@ -655,32 +656,50 @@ def close_tiktok_login_modal(driver):
     except:
         pass
 
-    # Cách 2: Tìm các nút Đóng modal bằng XPath
+    # Danh sách các XPath để định vị nút đóng (X) của các loại popups
     selectors = [
-        "//div[contains(@id, 'login-modal')]//div[contains(@class, 'close')]",
-        "//button[@aria-label='Close']",
-        "//div[contains(@class, 'login-modal')]//button",
         "//*[@data-e2e='modal-close-button']",
-        "//div[contains(@class, 'ModalClose')]//button",
+        "//*[@aria-label='Close' or @aria-label='close' or @aria-label='Đóng' or contains(@aria-label, 'Close') or contains(@aria-label, 'close')]",
+        "//*[contains(@class, 'tux-modal-close') or contains(@class, 'tux-dialog-close') or contains(@class, 'tux-icon-close')]",
+        "//*[contains(@class, 'dy-modal-close') or contains(@class, 'modal-close') or contains(@class, 'popup-close') or contains(@class, 'ModalClose')]",
+        "//*[contains(text(), 'would you like to watch') or contains(., 'What would you like to watch')]/..//*[contains(@class, 'close') or contains(@class, 'Close') or @aria-label='Close' or contains(@class, 'modal-close') or @data-e2e='modal-close-button']",
+        "//div[contains(@class, 'login-modal')]//button",
         "//div[contains(@class, 'modal')]//div[contains(@class, 'close')]",
-        "//button[contains(@class, 'close')]"
+        "//button[contains(@class, 'close')]",
+        "//div[role='dialog']//*[contains(@class, 'close') or contains(@class, 'Close') or contains(@class, 'ModalClose') or @aria-label='Close']",
+        "//button[text()='×' or text()='x' or text()='X']",
+        "//div[role='dialog']//*[text()='×' or text()='x' or text()='X']",
+        "//*[contains(@class, 'close') or contains(@class, 'Close') or contains(@class, 'ModalClose')]"
     ]
+    
+    clicked_any = False
+    clicked_elements = set()
     
     for xpath in selectors:
         try:
             elements = driver.find_elements(By.XPATH, xpath)
             for el in elements:
+                # Tránh click trùng một phần tử nhiều lần trong cùng một lượt check
+                if el in clicked_elements:
+                    continue
                 if el.is_displayed():
                     try:
+                        # Thử click thông thường
                         el.click()
                     except:
-                        driver.execute_script("arguments[0].click();", el)
-                    logger.info("✓ Đã click đóng login popup của TikTok.")
-                    time.sleep(1)
-                    return True
-        except:
+                        try:
+                            # Nếu click lỗi (bị che khuất), dùng JavaScript click
+                            driver.execute_script("arguments[0].click();", el)
+                        except:
+                            continue
+                    logger.info(f"✓ Đã click đóng popup của TikTok (XPath: {xpath}).")
+                    clicked_elements.add(el)
+                    clicked_any = True
+                    time.sleep(0.5)
+        except Exception as e:
             continue
-    return False
+            
+    return clicked_any
 
 def check_and_resolve_something_went_wrong(driver, channel_url, max_attempts=3):
     """
@@ -1225,7 +1244,24 @@ def start_browser_session_donut(api, browser_handler, profile_id):
         return None
 
 
+def check_singleton_port(port=28473):
+    """
+    Đảm bảo chỉ có duy nhất 1 instance của main.py chạy tại một thời điểm.
+    """
+    import socket
+    try:
+        global _singleton_socket
+        _singleton_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        _singleton_socket.bind(('127.0.0.1', port))
+    except OSError:
+        logger.error(f"LỖI: Tool đang được chạy ở một cửa sổ khác (Cổng {port} đã bị chiếm). Vui lòng đóng cửa sổ tool cũ trước khi chạy mới!")
+        print(f"\n[LOI] Tool dang duoc chay o mot cua so khac (Port {port} da bi chiem).")
+        print("Vui long dong cac cua so Tool cu truoc khi chay moi!")
+        sys.exit(1)
+
+
 def main():
+    check_singleton_port()
     import random as _random
 
     browser_type = getattr(config, 'BROWSER_TYPE', 'gemlogin').lower()

@@ -25,6 +25,36 @@ class Browser:
                 time.sleep(0.5)
         return False
 
+    def _reset_profile_exit_type(self, user_data_dir, profile_dir):
+        """Đặt trạng thái exit_type thành Normal để tránh Chrome hiển thị thông báo 'Restore pages?'."""
+        try:
+            prefs_path = os.path.join(user_data_dir, profile_dir, "Preferences")
+            if os.path.exists(prefs_path):
+                import json
+                with open(prefs_path, "r", encoding="utf-8") as f:
+                    prefs = json.load(f)
+                
+                # Cập nhật thông số để Chrome/Cốc Cốc không báo lỗi tắt đột ngột
+                modified = False
+                if "profile" not in prefs:
+                    prefs["profile"] = {}
+                    modified = True
+                
+                if prefs["profile"].get("exit_type") != "Normal":
+                    prefs["profile"]["exit_type"] = "Normal"
+                    modified = True
+                    
+                if prefs["profile"].get("exited_cleanly") is not True:
+                    prefs["profile"]["exited_cleanly"] = True
+                    modified = True
+                
+                if modified:
+                    with open(prefs_path, "w", encoding="utf-8") as f:
+                        json.dump(prefs, f)
+                    self.logger.info(f"✓ Đã đặt lại exit_type thành Normal cho profile: {profile_dir}")
+        except Exception as e:
+            self.logger.warning(f"Không thể đặt lại exit_type: {e}")
+
     def _kill_browser_processes(self, process_name, user_data_dir=None, debug_port=None):
         """
         Tắt các tiến trình browser đang chạy liên quan đến profile được chỉ định.
@@ -159,6 +189,9 @@ class Browser:
             m = re.search(r'\(([^)]+)\)$', profile_name)
             profile_dir = m.group(1) if m else profile_name
 
+            # Khôi phục trạng thái tắt bình thường để ẩn thông báo "Restore pages"
+            self._reset_profile_exit_type(user_data_dir, profile_dir)
+
             self.logger.info(f"Đang khởi động Chrome: {chrome_exe}")
             self.logger.info(f"  User Data: {user_data_dir}")
             self.logger.info(f"  Profile Dir: {profile_dir} (từ '{profile_name}')")
@@ -173,8 +206,6 @@ class Browser:
                 "--no-default-browser-check",
                 "--disable-blink-features=AutomationControlled",
                 "--mute-audio",
-                "--disable-gpu",
-                "--disable-dev-shm-usage",
             ]
 
             self._native_process = subprocess.Popen(
@@ -233,6 +264,9 @@ class Browser:
             m = re.search(r'\(([^)]+)\)$', profile_name)
             profile_dir = m.group(1) if m else profile_name
 
+            # Khôi phục trạng thái tắt bình thường để ẩn thông báo "Restore pages"
+            self._reset_profile_exit_type(user_data_dir, profile_dir)
+
             self.logger.info(f"Đang khởi động Cốc Cốc: {cococ_exe}")
             self.logger.info(f"  User Data: {user_data_dir}")
             self.logger.info(f"  Profile Dir: {profile_dir} (từ '{profile_name}')")
@@ -247,8 +281,6 @@ class Browser:
                 "--no-default-browser-check",
                 "--disable-blink-features=AutomationControlled",
                 "--mute-audio",
-                "--disable-gpu",
-                "--disable-dev-shm-usage",
             ]
 
             self._native_process = subprocess.Popen(
