@@ -119,6 +119,35 @@ class Browser:
         except Exception as e:
             self.logger.warning(f"Lỗi trong quá trình quét/đóng tiến trình {process_name}: {e}")
 
+    def _reset_profile_exit_type(self, user_data_dir, profile_dir):
+        """Đặt trạng thái exit_type thành Normal để tránh Chrome hiển thị thông báo 'Restore pages?'."""
+        try:
+            prefs_path = os.path.join(user_data_dir, profile_dir, "Preferences")
+            if os.path.exists(prefs_path):
+                import json
+                with open(prefs_path, "r", encoding="utf-8") as f:
+                    prefs = json.load(f)
+                
+                # Cập nhật thông số để Chrome/Cốc Cốc không báo lỗi tắt đột ngột
+                modified = False
+                if "profile" not in prefs:
+                    prefs["profile"] = {}
+                    modified = True
+                
+                if prefs["profile"].get("exit_type") != "Normal":
+                    prefs["profile"]["exit_type"] = "Normal"
+                    modified = True
+                    
+                if prefs["profile"].get("exited_cleanly") is not True:
+                    prefs["profile"]["exited_cleanly"] = True
+                    modified = True
+                
+                if modified:
+                    with open(prefs_path, "w", encoding="utf-8") as f:
+                        json.dump(prefs, f)
+                    self.logger.info(f"✓ Đã đặt lại exit_type thành Normal cho profile: {profile_dir}")
+        except Exception as e:
+            self.logger.warning(f"Không thể đặt lại exit_type: {e}")
 
     def attach(self, debugger_address, driver_path=None):
         """
@@ -173,6 +202,13 @@ class Browser:
             driver_path: Đường dẫn chromedriver.exe
         """
         try:
+            # Tìm Chrome exe nếu không chỉ định
+            if not chrome_exe or not os.path.exists(chrome_exe):
+                chrome_exe = self._find_chrome_exe()
+            if not chrome_exe:
+                self.logger.error("Không tìm thấy Chrome. Vui lòng chỉ định đường dẫn chrome.exe.")
+                return None
+
             # Check for Chrome 136+ restriction on default User Data Dir
             default_chrome_dir = os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\User Data").lower()
             default_chrome_dir_alt = os.path.expandvars(r"%USERPROFILE%\AppData\Local\Google\Chrome\User Data").lower()
@@ -189,18 +225,14 @@ class Browser:
             # Tắt Chrome đang chạy để tránh khóa profile (chỉ tắt Chrome của tool này)
             self._kill_browser_processes("chrome.exe", debug_port=debug_port, user_data_dir=user_data_dir)
 
-            # Tìm Chrome exe nếu không chỉ định
-            if not chrome_exe or not os.path.exists(chrome_exe):
-                chrome_exe = self._find_chrome_exe()
-            if not chrome_exe:
-                self.logger.error("Không tìm thấy Chrome. Vui lòng chỉ định đường dẫn chrome.exe.")
-                return None
-            
             os.makedirs(user_data_dir, exist_ok=True)
 
             import re
             m = re.search(r'\(([^)]+)\)$', profile_name)
             profile_dir = m.group(1) if m else profile_name
+
+            # Khôi phục trạng thái tắt bình thường để ẩn thông báo "Restore pages"
+            self._reset_profile_exit_type(user_data_dir, profile_dir)
 
             self.logger.info(f"Đang khởi động Chrome: {chrome_exe}")
             self.logger.info(f"  User Data: {user_data_dir}")
@@ -214,10 +246,8 @@ class Browser:
                 f"--profile-directory={profile_dir}",
                 "--no-first-run",
                 "--no-default-browser-check",
-                "--disable-gpu",
                 "--disable-blink-features=AutomationControlled",
-                "--no-sandbox",
-                "--disable-dev-shm-usage",
+                "--mute-audio",
             ]
 
             self._native_process = subprocess.Popen(
@@ -248,6 +278,12 @@ class Browser:
             driver_path: Đường dẫn chromedriver tương thích với Cốc Cốc
         """
         try:
+            if not cococ_exe or not os.path.exists(cococ_exe):
+                cococ_exe = self._find_cococ_exe()
+            if not cococ_exe:
+                self.logger.error("Không tìm thấy Cốc Cốc. Vui lòng chỉ định đường dẫn browser.exe.")
+                return None
+
             # Check for Chromium 136+ restriction on default User Data Dir
             default_cococ_dir = os.path.expandvars(r"%LOCALAPPDATA%\CocCoc\Browser\User Data").lower()
             default_cococ_dir_alt = os.path.expandvars(r"%USERPROFILE%\AppData\Local\CocCoc\Browser\User Data").lower()
@@ -264,17 +300,14 @@ class Browser:
             # Tắt Cốc Cốc đang chạy để tránh khóa profile (chỉ tắt Cốc Cốc của tool này)
             self._kill_browser_processes("browser.exe", debug_port=debug_port, user_data_dir=user_data_dir)
 
-            if not cococ_exe or not os.path.exists(cococ_exe):
-                cococ_exe = self._find_cococ_exe()
-            if not cococ_exe:
-                self.logger.error("Không tìm thấy Cốc Cốc. Vui lòng chỉ định đường dẫn browser.exe.")
-                return None
-            
             os.makedirs(user_data_dir, exist_ok=True)
 
             import re
             m = re.search(r'\(([^)]+)\)$', profile_name)
             profile_dir = m.group(1) if m else profile_name
+
+            # Khôi phục trạng thái tắt bình thường để ẩn thông báo "Restore pages"
+            self._reset_profile_exit_type(user_data_dir, profile_dir)
 
             self.logger.info(f"Đang khởi động Cốc Cốc: {cococ_exe}")
             self.logger.info(f"  User Data: {user_data_dir}")
@@ -288,10 +321,8 @@ class Browser:
                 f"--profile-directory={profile_dir}",
                 "--no-first-run",
                 "--no-default-browser-check",
-                "--disable-gpu",
                 "--disable-blink-features=AutomationControlled",
-                "--no-sandbox",
-                "--disable-dev-shm-usage",
+                "--mute-audio",
             ]
 
             self._native_process = subprocess.Popen(

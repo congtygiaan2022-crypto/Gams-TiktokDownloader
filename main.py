@@ -482,7 +482,7 @@ def download_and_save_video(driver, video_url, channel_name, tk_manager, downloa
                 save_name = f"video_{video_id}_#{random_tag}.mp4"
             else:
                 safe_title = sanitize_filename(clean_title)
-                if len(safe_title) > 200: safe_title = safe_title[:200]
+                if len(safe_title) > 80: safe_title = safe_title[:80].strip()
                 if not safe_title:
                     video_id = video_url.split('/')[-1].split('?')[0]
                     random_tag = generate_random_hashtag(6)
@@ -647,7 +647,8 @@ def copy_existing_download(video_url, origin_channel_name, copy_channels, tk_man
 
 def close_tiktok_login_modal(driver):
     """
-    Tự động phát hiện và đóng cửa sổ đăng nhập (login modal) của TikTok nếu xuất hiện.
+    Tự động phát hiện và đóng tất cả các cửa sổ quảng cáo, modal đăng nhập,
+    hoặc lựa chọn sở thích (popups) của TikTok nếu xuất hiện.
     """
     try:
         # Cách 1: Gửi phím ESCAPE tới body để đóng các dialog/modal nhanh
@@ -655,32 +656,111 @@ def close_tiktok_login_modal(driver):
     except:
         pass
 
-    # Cách 2: Tìm các nút Đóng modal bằng XPath
+    # Danh sách các XPath để định vị nút đóng (X) của các loại popups
     selectors = [
-        "//div[contains(@id, 'login-modal')]//div[contains(@class, 'close')]",
-        "//button[@aria-label='Close']",
-        "//div[contains(@class, 'login-modal')]//button",
         "//*[@data-e2e='modal-close-button']",
-        "//div[contains(@class, 'ModalClose')]//button",
+        "//*[@aria-label='Close' or @aria-label='close' or @aria-label='Đóng' or contains(@aria-label, 'Close') or contains(@aria-label, 'close')]",
+        "//*[contains(@class, 'tux-modal-close') or contains(@class, 'tux-dialog-close') or contains(@class, 'tux-icon-close')]",
+        "//*[contains(@class, 'dy-modal-close') or contains(@class, 'modal-close') or contains(@class, 'popup-close') or contains(@class, 'ModalClose')]",
+        "//*[contains(text(), 'would you like to watch') or contains(., 'What would you like to watch')]/..//*[contains(@class, 'close') or contains(@class, 'Close') or @aria-label='Close' or contains(@class, 'modal-close') or @data-e2e='modal-close-button']",
+        "//div[contains(@class, 'login-modal')]//button",
         "//div[contains(@class, 'modal')]//div[contains(@class, 'close')]",
-        "//button[contains(@class, 'close')]"
+        "//button[contains(@class, 'close')]",
+        "//div[role='dialog']//*[contains(@class, 'close') or contains(@class, 'Close') or contains(@class, 'ModalClose') or @aria-label='Close']",
+        "//button[text()='×' or text()='x' or text()='X']",
+        "//div[role='dialog']//*[text()='×' or text()='x' or text()='X']",
+        "//*[contains(@class, 'close') or contains(@class, 'Close') or contains(@class, 'ModalClose')]"
     ]
+    
+    clicked_any = False
+    clicked_elements = set()
     
     for xpath in selectors:
         try:
             elements = driver.find_elements(By.XPATH, xpath)
             for el in elements:
+                # Tránh click trùng một phần tử nhiều lần trong cùng một lượt check
+                if el in clicked_elements:
+                    continue
                 if el.is_displayed():
                     try:
+                        # Thử click thông thường
                         el.click()
                     except:
-                        driver.execute_script("arguments[0].click();", el)
-                    logger.info("✓ Đã click đóng login popup của TikTok.")
-                    time.sleep(1)
-                    return True
-        except:
+                        try:
+                            # Nếu click lỗi (bị che khuất), dùng JavaScript click
+                            driver.execute_script("arguments[0].click();", el)
+                        except:
+                            continue
+                    logger.info(f"✓ Đã click đóng popup của TikTok (XPath: {xpath}).")
+                    clicked_elements.add(el)
+                    clicked_any = True
+                    time.sleep(0.5)
+        except Exception as e:
             continue
-    return False
+            
+    return clicked_any
+
+def check_and_resolve_something_went_wrong(driver, channel_url, max_attempts=3):
+    """
+    Kiểm tra xem trang có bị lỗi 'Something went wrong' hay không.
+    Nếu có, tự động nhấn nút Refresh hoặc tải lại trang.
+    Trả về True nếu phát hiện và đã xử lý (hoặc đang xử lý), False nếu không bị lỗi.
+    Trả về 'SOMETHING_WENT_WRONG' nếu đã thử hết số lần mà vẫn bị lỗi.
+    """
+    for attempt in range(max_attempts):
+        try:
+            page_text = driver.find_element(By.TAG_NAME, "body").text
+        except:
+            page_text = ""
+
+        if "something went wrong" in page_text.lower():
+            logger.warning(f"Lỗi 'Something went wrong' xuất hiện trên kênh {channel_url}. Đang thử click Refresh lần {attempt + 1}/{max_attempts}...")
+            clicked = False
+            xpaths = [
+                "//button[text()='Refresh']",
+                "//button[contains(text(), 'Refresh')]",
+                "//*[text()='Refresh']",
+                "//div[text()='Refresh']",
+                "//button[contains(@class, 'refresh')]",
+                "//*[contains(@class, 'Refresh')]"
+            ]
+            for xpath in xpaths:
+                try:
+                    elements = driver.find_elements(By.XPATH, xpath)
+                    for el in elements:
+                        if el.is_displayed() and el.is_enabled():
+                            try:
+                                el.click()
+                            except:
+                                driver.execute_script("arguments[0].click();", el)
+                            clicked = True
+                            break
+                    if clicked:
+                        break
+                except:
+                    pass
+            if not clicked:
+                logger.info("Không tìm thấy nút Refresh bằng selector, đang reload trang bằng driver.refresh()...")
+                driver.refresh()
+            
+            time.sleep(5)
+            close_tiktok_login_modal(driver)
+        else:
+            if attempt > 0:
+                logger.info(f"✓ Đã vượt qua lỗi 'Something went wrong' sau khi refresh.")
+                return True
+            return False
+
+    # Check one last time
+    try:
+        page_text = driver.find_element(By.TAG_NAME, "body").text
+    except:
+        page_text = ""
+    if "something went wrong" in page_text.lower():
+        logger.error(f"Lỗi 'Something went wrong' vẫn tồn tại sau {max_attempts} lần refresh trên kênh {channel_url}!")
+        return "SOMETHING_WENT_WRONG"
+    return True
 
 def scrape_channel(driver, channel_url, tk_manager=None, downloader=None, max_videos=config.MAX_VIDEOS_PER_CHANNEL, copy_channels=None):
     """
@@ -695,63 +775,23 @@ def scrape_channel(driver, channel_url, tk_manager=None, downloader=None, max_vi
         close_tiktok_login_modal(driver)
 
         # Check for early page load issues (Die or Something went wrong)
-        something_went_wrong_detected = False
-        for refresh_attempt in range(4):
-            try:
-                page_text = driver.find_element(By.TAG_NAME, "body").text
-            except:
-                page_text = ""
+        sww_res = check_and_resolve_something_went_wrong(driver, channel_url, max_attempts=4)
+        if sww_res == "SOMETHING_WENT_WRONG":
+            return "SOMETHING_WENT_WRONG"
 
-            # Check for "Die" account early
-            die_indicators = [
-                "Couldn't find this account",
-                "Looking for videos? Try browsing our trending creators"
-            ]
-            if any(ind in page_text for ind in die_indicators):
-                logger.warning(f"Kênh {channel_url} có vẻ đã bị xóa hoặc die (check early).")
-                return "DIE"
+        try:
+            page_text = driver.find_element(By.TAG_NAME, "body").text
+        except:
+            page_text = ""
 
-            if "something went wrong" in page_text.lower():
-                something_went_wrong_detected = True
-                if refresh_attempt < 3:
-                    logger.warning(f"Lỗi 'Something went wrong' xuất hiện trên kênh {channel_url}. Đang thử click Refresh lần {refresh_attempt + 1}/3...")
-                    # Click Refresh button
-                    clicked = False
-                    xpaths = [
-                        "//button[text()='Refresh']",
-                        "//button[contains(text(), 'Refresh')]",
-                        "//*[text()='Refresh']",
-                        "//div[text()='Refresh']",
-                        "//button[contains(@class, 'refresh')]",
-                        "//*[contains(@class, 'Refresh')]"
-                    ]
-                    for xpath in xpaths:
-                        try:
-                            elements = driver.find_elements(By.XPATH, xpath)
-                            for el in elements:
-                                if el.is_displayed() and el.is_enabled():
-                                    try:
-                                        el.click()
-                                    except:
-                                        driver.execute_script("arguments[0].click();", el)
-                                    clicked = True
-                                    break
-                            if clicked:
-                                break
-                        except:
-                            pass
-                    if not clicked:
-                        logger.info("Không tìm thấy nút Refresh bằng selector, đang reload trang bằng driver.refresh()...")
-                        driver.refresh()
-                    
-                    time.sleep(5)
-                    close_tiktok_login_modal(driver)
-                else:
-                    logger.error(f"Lỗi 'Something went wrong' vẫn tồn tại sau 3 lần refresh trên kênh {channel_url}!")
-                    return "SOMETHING_WENT_WRONG"
-            else:
-                something_went_wrong_detected = False
-                break
+        # Check for "Die" account early
+        die_indicators = [
+            "Couldn't find this account",
+            "Looking for videos? Try browsing our trending creators"
+        ]
+        if any(ind in page_text for ind in die_indicators):
+            logger.warning(f"Kênh {channel_url} có vẻ đã bị xóa hoặc die (check early).")
+            return "DIE"
 
         wait = WebDriverWait(driver, 15)
         
@@ -812,6 +852,17 @@ def scrape_channel(driver, channel_url, tk_manager=None, downloader=None, max_vi
             if posts:
                 logger.info(f"Đã tìm thấy {len(posts)} bài viết trên DOM.")
                 break
+            
+            # Check for 'Something went wrong' during post load attempt
+            sww_res = check_and_resolve_something_went_wrong(driver, channel_url, max_attempts=2)
+            if sww_res == "SOMETHING_WENT_WRONG":
+                return "SOMETHING_WENT_WRONG"
+            elif sww_res is True:
+                # Nếu đã refresh lại trang, ta cần tìm lại posts từ đầu
+                posts = driver.find_elements(By.XPATH, post_selector)
+                if posts:
+                    logger.info(f"Đã tìm thấy {len(posts)} bài viết trên DOM sau khi refresh lỗi.")
+                    break
             
             try:
                 # Đợi ngắn xem phần tử xuất hiện không
@@ -928,11 +979,33 @@ def scrape_channel(driver, channel_url, tk_manager=None, downloader=None, max_vi
                             time.sleep(3)
                             download_and_save_video(driver, full_url, final_dir_name, tk_manager, downloader, copy_channels=copy_channels)
                         finally:
-                            # Luôn đóng tab phụ và về tab chính
-                            if len(driver.window_handles) > 1:
-                                driver.close()
-                                time.sleep(0.5)
-                            driver.switch_to.window(main_handle)
+                            # Luôn đóng tất cả các tab phụ (kể cả popup ads) và về tab chính
+                            try:
+                                current_handles = driver.window_handles
+                                if main_handle in current_handles:
+                                    for h in list(current_handles):
+                                        if h != main_handle:
+                                            try:
+                                                driver.switch_to.window(h)
+                                                driver.close()
+                                                time.sleep(0.2)
+                                            except:
+                                                pass
+                                    driver.switch_to.window(main_handle)
+                                else:
+                                    # Nếu mất main_handle, giữ lại tab đầu tiên làm main_handle mới
+                                    if current_handles:
+                                        main_handle = current_handles[0]
+                                        for h in list(current_handles)[1:]:
+                                            try:
+                                                driver.switch_to.window(h)
+                                                driver.close()
+                                                time.sleep(0.2)
+                                            except:
+                                                pass
+                                        driver.switch_to.window(main_handle)
+                            except Exception as win_err:
+                                logger.warning(f"Lỗi dọn dẹp các tab phụ: {win_err}")
 
                         count += 1
                 else:
@@ -1171,7 +1244,24 @@ def start_browser_session_donut(api, browser_handler, profile_id):
         return None
 
 
+def check_singleton_port(port=28473):
+    """
+    Đảm bảo chỉ có duy nhất 1 instance của main.py chạy tại một thời điểm.
+    """
+    import socket
+    try:
+        global _singleton_socket
+        _singleton_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        _singleton_socket.bind(('127.0.0.1', port))
+    except OSError:
+        logger.error(f"LỖI: Tool đang được chạy ở một cửa sổ khác (Cổng {port} đã bị chiếm). Vui lòng đóng cửa sổ tool cũ trước khi chạy mới!")
+        print(f"\n[LOI] Tool dang duoc chay o mot cua so khac (Port {port} da bi chiem).")
+        print("Vui long dong cac cua so Tool cu truoc khi chay moi!")
+        sys.exit(1)
+
+
 def main():
+    check_singleton_port()
     import random as _random
 
     browser_type = getattr(config, 'BROWSER_TYPE', 'gemlogin').lower()
