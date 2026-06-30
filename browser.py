@@ -25,14 +25,100 @@ class Browser:
                 time.sleep(0.5)
         return False
 
-    def _kill_browser_processes(self, process_name):
-        """Tắt tất cả tiến trình browser đang chạy để tránh khóa profile."""
+    def _kill_browser_processes(self, process_name, debug_port=None, user_data_dir=None):
+        """Tắt các tiến trình browser cụ thể đang khóa profile hoặc chiếm debug port."""
         try:
-            self.logger.info(f"Đang đóng các tiến trình {process_name} để tránh khóa profile...")
-            subprocess.run(f'taskkill /F /IM {process_name}', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            time.sleep(1)
+            if not debug_port and not user_data_dir:
+                self.logger.info(f"Không có cấu hình port/profile cụ thể, không tắt {process_name} để tránh tắt nhầm.")
+                return
+
+            self.logger.info(f"Đang quét các tiến trình {process_name} liên quan tới port={debug_port} hoặc profile...")
+            
+            # Đảm bảo đường dẫn tuyệt đối và chuẩn hóa
+            user_data_dir_clean = None
+            if user_data_dir:
+                user_data_dir_clean = os.path.normpath(os.path.abspath(user_data_dir)).replace('\\', '/').lower()
+                
+                # Safeguard: Không bao giờ kill dựa trên User Data Dir mặc định của hệ thống để tránh tắt Chrome chính của user
+                default_chrome_dir = os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\User Data").lower()
+                default_chrome_dir_alt = os.path.expandvars(r"%USERPROFILE%\AppData\Local\Google\Chrome\User Data").lower()
+                default_cococ_dir = os.path.expandvars(r"%LOCALAPPDATA%\CocCoc\Browser\User Data").lower()
+                default_cococ_dir_alt = os.path.expandvars(r"%USERPROFILE%\AppData\Local\CocCoc\Browser\User Data").lower()
+                
+                if user_data_dir_clean in (default_chrome_dir.replace('\\', '/'), 
+                                           default_chrome_dir_alt.replace('\\', '/'),
+                                           default_cococ_dir.replace('\\', '/'),
+                                           default_cococ_dir_alt.replace('\\', '/')):
+                    self.logger.warning("Cảnh báo: Phát hiện User Data Dir trùng với thư mục mặc định của hệ thống. Bỏ qua lọc theo thư mục để bảo vệ Chrome của user.")
+                    user_data_dir_clean = None
+
+            processes = []
+            
+            # Cách 1: Dùng wmic
+            try:
+                cmd = f'wmic process where "name=\'{process_name}\'" get commandline,processid'
+                output = subprocess.check_output(cmd, shell=True).decode('utf-8', errors='ignore')
+                for line in output.splitlines():
+                    line = line.strip()
+                    if not line or line.lower().startswith('commandline'):
+                        continue
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        pid_str = parts[-1]
+                        cmd_line = " ".join(parts[:-1])
+                        if pid_str.isdigit():
+                            processes.append({'pid': int(pid_str), 'commandline': cmd_line})
+            except Exception as e:
+                self.logger.debug(f"wmic process scan error: {e}")
+
+            # Cách 2: Dùng PowerShell (nếu wmic lỗi hoặc không trả về gì)
+            if not processes:
+                try:
+                    ps_cmd = f'powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-CimInstance Win32_Process -Filter \\"name = \'{process_name}\'\\" | Select-Object ProcessId, CommandLine | ConvertTo-Json -Compress"'
+                    output = subprocess.check_output(ps_cmd, shell=True).decode('utf-8', errors='ignore').strip()
+                    if output:
+                        import json
+                        data = json.loads(output)
+                        if isinstance(data, dict):
+                            data = [data]
+                        for item in data:
+                            pid = item.get('ProcessId')
+                            cmd_line = item.get('CommandLine') or ''
+                            if pid:
+                                processes.append({'pid': int(pid), 'commandline': cmd_line})
+                except Exception as e:
+                    self.logger.debug(f"powershell process scan error: {e}")
+
+            # Lọc và kill
+            killed_count = 0
+            for p in processes:
+                cmd_line_clean = p['commandline'].replace('\\', '/').lower()
+                
+                match_port = False
+                if debug_port:
+                    match_port = f"--remote-debugging-port={debug_port}" in cmd_line_clean
+
+                match_dir = False
+                if user_data_dir_clean:
+                    match_dir = user_data_dir_clean in cmd_line_clean
+
+                if match_port or match_dir:
+                    pid = p['pid']
+                    try:
+                        self.logger.info(f"Đóng tiến trình {process_name} trùng khớp (PID: {pid}, Port match: {match_port}, Dir match: {match_dir})")
+                        subprocess.run(f'taskkill /F /PID {pid}', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW)
+                        killed_count += 1
+                    except Exception as k_err:
+                        self.logger.warning(f"Lỗi khi đóng PID {pid}: {k_err}")
+
+            if killed_count > 0:
+                time.sleep(1)
+            else:
+                self.logger.info(f"Không phát hiện tiến trình {process_name} nào cần đóng.")
+
         except Exception as e:
-            self.logger.warning(f"Lỗi khi tắt tiến trình {process_name}: {e}")
+            self.logger.warning(f"Lỗi trong quá trình quét/đóng tiến trình {process_name}: {e}")
+
 
     def attach(self, debugger_address, driver_path=None):
         """
@@ -87,16 +173,6 @@ class Browser:
             driver_path: Đường dẫn chromedriver.exe
         """
         try:
-            # Tắt Chrome đang chạy để tránh khóa profile
-            self._kill_browser_processes("chrome.exe")
-
-            # Tìm Chrome exe nếu không chỉ định
-            if not chrome_exe or not os.path.exists(chrome_exe):
-                chrome_exe = self._find_chrome_exe()
-            if not chrome_exe:
-                self.logger.error("Không tìm thấy Chrome. Vui lòng chỉ định đường dẫn chrome.exe.")
-                return None
-
             # Check for Chrome 136+ restriction on default User Data Dir
             default_chrome_dir = os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\User Data").lower()
             default_chrome_dir_alt = os.path.expandvars(r"%USERPROFILE%\AppData\Local\Google\Chrome\User Data").lower()
@@ -109,6 +185,16 @@ class Browser:
                     f"Tự động chuyển sang thư mục chuyên dụng: {new_dir}"
                 )
                 user_data_dir = new_dir
+
+            # Tắt Chrome đang chạy để tránh khóa profile (chỉ tắt Chrome của tool này)
+            self._kill_browser_processes("chrome.exe", debug_port=debug_port, user_data_dir=user_data_dir)
+
+            # Tìm Chrome exe nếu không chỉ định
+            if not chrome_exe or not os.path.exists(chrome_exe):
+                chrome_exe = self._find_chrome_exe()
+            if not chrome_exe:
+                self.logger.error("Không tìm thấy Chrome. Vui lòng chỉ định đường dẫn chrome.exe.")
+                return None
             
             os.makedirs(user_data_dir, exist_ok=True)
 
@@ -162,15 +248,6 @@ class Browser:
             driver_path: Đường dẫn chromedriver tương thích với Cốc Cốc
         """
         try:
-            # Tắt Cốc Cốc đang chạy để tránh khóa profile
-            self._kill_browser_processes("browser.exe")
-
-            if not cococ_exe or not os.path.exists(cococ_exe):
-                cococ_exe = self._find_cococ_exe()
-            if not cococ_exe:
-                self.logger.error("Không tìm thấy Cốc Cốc. Vui lòng chỉ định đường dẫn browser.exe.")
-                return None
-
             # Check for Chromium 136+ restriction on default User Data Dir
             default_cococ_dir = os.path.expandvars(r"%LOCALAPPDATA%\CocCoc\Browser\User Data").lower()
             default_cococ_dir_alt = os.path.expandvars(r"%USERPROFILE%\AppData\Local\CocCoc\Browser\User Data").lower()
@@ -183,6 +260,15 @@ class Browser:
                     f"Tự động chuyển sang thư mục chuyên dụng: {new_dir}"
                 )
                 user_data_dir = new_dir
+
+            # Tắt Cốc Cốc đang chạy để tránh khóa profile (chỉ tắt Cốc Cốc của tool này)
+            self._kill_browser_processes("browser.exe", debug_port=debug_port, user_data_dir=user_data_dir)
+
+            if not cococ_exe or not os.path.exists(cococ_exe):
+                cococ_exe = self._find_cococ_exe()
+            if not cococ_exe:
+                self.logger.error("Không tìm thấy Cốc Cốc. Vui lòng chỉ định đường dẫn browser.exe.")
+                return None
             
             os.makedirs(user_data_dir, exist_ok=True)
 

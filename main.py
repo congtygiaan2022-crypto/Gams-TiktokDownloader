@@ -1181,7 +1181,16 @@ def main():
     api = _build_api()  # None nếu Chrome/CốcCốc
     browser_handler = Browser()
 
-    tk_manager = TikTokManager()
+    active_profile_id = os.environ.get("ACTIVE_PROFILE_ID", "")
+    if active_profile_id:
+        tk_manager = TikTokManager(
+            channels_file=f"danhsachtiktok_{active_profile_id}.txt",
+            history_file=f"lichsutaitiktok_{active_profile_id}.txt",
+            queue_file=f"hangdoitiktok_{active_profile_id}.txt",
+            error_file=f"kenhloi_{active_profile_id}.txt"
+        )
+    else:
+        tk_manager = TikTokManager()
     downloader = Downloader()
 
     profile_id = None           # ID đang chạy (GemLogin/GPM)

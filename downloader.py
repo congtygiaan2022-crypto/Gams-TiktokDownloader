@@ -53,8 +53,16 @@ class Downloader:
             }
         }
         
-        # Sử dụng cookies nếu có
-        cookies_path = os.path.join(os.getcwd(), 'cookies.txt')
+        # Sử dụng cookies nếu có (tách biệt theo profile)
+        active_profile_id = os.environ.get("ACTIVE_PROFILE_ID", "")
+        if active_profile_id:
+            cookies_path = os.path.join(os.getcwd(), f'cookies_{active_profile_id}.txt')
+            # fallback to default cookies.txt if profile-specific doesn't exist
+            if not os.path.exists(cookies_path):
+                cookies_path = os.path.join(os.getcwd(), 'cookies.txt')
+        else:
+            cookies_path = os.path.join(os.getcwd(), 'cookies.txt')
+
         if os.path.exists(cookies_path):
             ydl_opts['cookiefile'] = cookies_path
             self.logger.info(f"Sử dụng cookies từ: {cookies_path}")
